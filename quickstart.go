@@ -77,7 +77,6 @@ func main() {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
 
-	// If modifying these scopes, delete your previously saved token.json.
 	config, err := google.ConfigFromJSON(b, calendar.CalendarReadonlyScope)
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
@@ -89,15 +88,25 @@ func main() {
 		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
 
-	t := time.Now().Format(time.RFC3339)
-	events, err := srv.Events.List("primary").ShowDeleted(false).
-		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
+	// 現在時刻を取得
+	now := time.Now()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endTime := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
+
+	events, err := srv.Events.List("primary").
+		ShowDeleted(false).
+		SingleEvents(true).
+		TimeMin(startTime.Format(time.RFC3339)).
+		TimeMax(endTime.Format(time.RFC3339)).
+		OrderBy("startTime").
+		Do()
 	if err != nil {
-		log.Fatalf("Unable to retrieve next ten of the user's events: %v", err)
+		log.Fatalf("Unable to retrieve today's events: %v", err)
 	}
-	fmt.Println("Upcoming events:")
+
+	fmt.Println("Today's events:")
 	if len(events.Items) == 0 {
-		fmt.Println("No upcoming events found.")
+		fmt.Println("No events found for today.")
 	} else {
 		for _, item := range events.Items {
 			date := item.Start.DateTime

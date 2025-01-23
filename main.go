@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +15,21 @@ import (
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 )
+
+// カラーIDと色名のマッピング
+var colorNames = map[string]string{
+	"1":  "薄紫",
+	"2":  "緑",
+	"3":  "紫",
+	"4":  "赤",
+	"5":  "黄",
+	"6":  "オレンジ",
+	"7":  "水色",
+	"8":  "グレー",
+	"9":  "青紫",
+	"10": "緑",
+	"11": "赤",
+}
 
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
@@ -71,6 +87,22 @@ func saveToken(path string, token *oauth2.Token) {
 }
 
 func main() {
+	// 日付引数の処理
+	var targetDate time.Time
+	var err error
+
+	dateStr := flag.String("date", "", "Date to fetch events (format: YYYY-MM-DD)")
+	flag.Parse()
+
+	if *dateStr != "" {
+		targetDate, err = time.Parse("2006-01-02", *dateStr)
+		if err != nil {
+			log.Fatalf("Invalid date format. Please use YYYY-MM-DD format: %v", err)
+		}
+	} else {
+		targetDate = time.Now()
+	}
+
 	ctx := context.Background()
 	b, err := os.ReadFile("credentials.json")
 	if err != nil {
@@ -88,10 +120,10 @@ func main() {
 		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
 
-	// 現在時刻を取得
-	now := time.Now()
-	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	endTime := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
+	// 前日の開始時刻から当日の終了時刻までを設定
+	startTime := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location()).
+		AddDate(0, 0, -1) // 前日の00:00:00
+	endTime := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 23, 59, 59, 0, targetDate.Location())
 
 	events, err := srv.Events.List("primary").
 		ShowDeleted(false).
@@ -101,19 +133,60 @@ func main() {
 		OrderBy("startTime").
 		Do()
 	if err != nil {
-		log.Fatalf("Unable to retrieve today's events: %v", err)
+		log.Fatalf("Unable to retrieve events: %v", err)
 	}
 
-	fmt.Println("Today's events:")
+	// 日付を表示用にフォーマット
+	displayDate := targetDate.Format("2006-01-02")
+	fmt.Printf("%sの予定:\n", displayDate)
+
 	if len(events.Items) == 0 {
-		fmt.Println("No events found for today.")
+		fmt.Printf("%sの予定はありません。\n", displayDate)
 	} else {
 		for _, item := range events.Items {
-			date := item.Start.DateTime
-			if date == "" {
-				date = item.Start.Date
+			// イベントの開始時刻と終了時刻を取得
+			startDateTime := item.Start.DateTime
+			if startDateTime == "" {
+				startDateTime = item.Start.Date
 			}
-			fmt.Printf("%v (%v)\n", item.Summary, date)
+			endDateTime := item.End.DateTime
+			if endDateTime == "" {
+				endDateTime = item.End.Date
+			}
+
+			// イベントの開始時刻と終了時刻をパース
+			eventStart, _ := time.Parse(time.RFC3339, startDateTime)
+			eventEnd, _ := time.Parse(time.RFC3339, endDateTime)
+
+			// イベントが指定された日に終了するか、指定された日をまたぐ場合に表示
+			if (eventEnd.Format("2006-01-02") == displayDate) ||
+				(eventStart.Before(endTime) && eventEnd.After(startTime.AddDate(0, 0, 1))) {
+
+				// 表示形式を整える
+				startDisplay := eventStart.Format("15:04")
+				endDisplay := eventEnd.Format("15:04")
+
+				// 色情報の取得と変換
+				colorName := "デフォルト"
+				if item.ColorId != "" {
+					if name, ok := colorNames[item.ColorId]; ok {
+						colorName = name
+					}
+				}
+
+				// 終日イベントの場合は時刻を表示しない
+				if item.Start.DateTime == "" {
+					fmt.Printf("【%s】%v (終日) \n",
+						colorName,
+						item.Summary)
+				} else {
+					fmt.Printf("【%s】%v (%v-%v)\n",
+						colorName,
+						item.Summary,
+						startDisplay,
+						endDisplay)
+				}
+			}
 		}
 	}
 }
